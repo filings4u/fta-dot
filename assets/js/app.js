@@ -154,7 +154,8 @@ async function ctpaData(p){
 async function employerData(p){
   if(C.kind==='agency'){
     if(p==='testing')return invoke('workforce-employer-testing',{action:'list'});
-    if(p==='randoms'){const [w,h]=await Promise.all([invoke('workforce-employer-pools',{action:'workspace'}),invoke('workforce-employer-pools',{action:'selection_history'}).catch(()=>({events:[],members:[]}))]);return {...w,selection_events:h.events||[],selection_members:h.members||[]}}
+    if(p==='pools')return invoke('workforce-employer-pools',{action:'workspace'});
+    if(p==='selections'){const [w,h]=await Promise.all([invoke('workforce-employer-pools',{action:'workspace'}),invoke('workforce-employer-pools',{action:'selection_history'}).catch(()=>({events:[],members:[]}))]);return {...w,selection_events:h.events||[],selection_members:h.members||[]}}
     if(p==='documents')return invoke('workforce-employer-documents',{action:'workspace'});
     if(p==='notifications')return invoke('workforce-employer-notifications',{action:'workspace'}).catch(()=>invoke('workforce-employer-management',{action:'notifications'}));
     if(p==='support')return invoke('workforce-support',{action:'workspace'});
@@ -192,8 +193,8 @@ function dotScoped(d){
   if(Array.isArray(d.orders))o.orders=d.orders.filter(x=>isDot(x.program_type||x.programs?.program_type)&&agencyOk(x.programs?.dot_agency||x.dot_agency));
   if(Array.isArray(d.employee_programs))o.employee_programs=d.employee_programs.filter(x=>isDot(x.program_type||x.programs?.program_type));
   if(Array.isArray(d.pool_memberships))o.pool_memberships=d.pool_memberships.filter(x=>isDot(x.random_pools?.program_type));
-  if(Array.isArray(d.selection_events))o.selection_events=d.selection_events.filter(x=>isDot(x.random_pools?.program_type||x.program_type));
-  if(Array.isArray(d.selection_members))o.selection_members=d.selection_members.filter(x=>isDot(x.selection_events?.random_pools?.program_type||x.program_type));
+  if(Array.isArray(d.selection_events))o.selection_events=d.selection_events.filter(x=>isDot(x.random_pools?.program_type||x.program_type)&&agencyOk(x.random_pools?.dot_agency||x.dot_agency));
+  if(Array.isArray(d.selection_members))o.selection_members=d.selection_members.filter(x=>isDot(x.selection_events?.random_pools?.program_type||x.program_type)&&agencyOk(x.selection_events?.random_pools?.dot_agency||x.dot_agency));
   return o;
 }
 async function serviceCatalog(){const r=await fetch(`${C.mainUrl}/functions/v1/portal-order-catalog`,{headers:{apikey:C.mainKey}});const d=await r.json().catch(()=>({}));if(!r.ok||d.error)throw new Error(d.error||'Unable to load services.');return d}
@@ -224,7 +225,8 @@ function pickManagementRows(p,d){
   if(C.kind==='agency'){
     if(['drivers','covered-workers','mariners'].includes(p))return[d.employees||[],'employees'];
     if(p==='programs')return[d.programs||[],'programs'];
-    if(p==='randoms')return[d.selections||[],'selections'];
+    if(p==='pools')return[d.pools||[],'pools'];
+    if(p==='selections')return[d.selection_members||d.selection_events||[],'selections'];
     if(p==='testing')return[d.testing_orders||[],'testing'];
     if(['post-accident','serious-marine-incident','toxicology'].includes(p))return[d.post_accident_events||[],'accidents'];
     if(p==='compliance')return[d.compliance_cases||[],'compliance'];
@@ -281,7 +283,7 @@ function wireManagementActions(p,d,ctx){
       const employees=(d.employees||[]),programs=(d.programs||[]);
       modal('Create Testing Order',[{name:'employee_id',label:'Covered employee',type:'select',required:true,options:employees.map(x=>({value:x.id,label:[x.first_name,x.last_name].filter(Boolean).join(' ')||x.employee_number||x.id}))},{name:'program_id',label:'Program',type:'select',required:true,options:programs.map(x=>({value:x.id,label:x.name||x.id}))},{name:'reason',label:'Reason',type:'select',value:'pre_employment',options:['pre_employment','reasonable_suspicion','post_accident','return_to_duty','follow_up','other'].map(x=>({value:x,label:pretty(x)}))},{name:'test_type',label:'Test type',type:'select',value:'drug_and_alcohol',options:[{value:'drug',label:'Drug'},{value:'alcohol',label:'Alcohol'},{value:'drug_and_alcohol',label:'Drug + Alcohol'}]}],async v=>invoke('workforce-employer-testing',{action:'create',test:v}));
     });
-    if(p==='randoms'&&d.entitlements?.random_selections){
+    if(p==='selections'&&d.entitlements?.random_selections){
       const pools=(d.pools||[]).filter(x=>String(x.status||'active').toLowerCase()==='active');
       if(pools.length)addAction('Run Random Selection',()=>modal(`Run ${C.agency} Random Selection`,[{name:'pool_id',label:'Random pool',type:'select',required:true,options:pools.map(x=>({value:x.id,label:x.name||x.id}))},{name:'drug_count',label:'Drug selections',type:'number',value:'1'},{name:'alcohol_count',label:'Alcohol selections',type:'number',value:'0'}],async v=>invoke('workforce-employer-pools',{action:'run_selection',pool_id:v.pool_id,drug_count:Number(v.drug_count||0),alcohol_count:Number(v.alcohol_count||0)})));
     }
@@ -384,7 +386,8 @@ async function render(ctx){
     else if(p==='notifications'&&window.EmployerNotifications){setSubtitle('Review screenings4u notifications and reply to platform messages.');html=window.EmployerNotifications.render(d,ctx);}
     else if(p==='consents'&&window.EmployerConsents){setSubtitle(`Create, edit, send, and track ${C.agency}-specific consent forms and acknowledgments.`);html=window.EmployerConsents.render(d,ctx);}
     else if(p==='company'){html=profileView(d)+`<div class="section notice"><strong>${esc(C.agency)} management portal.</strong> This workspace manages only your company and your ${esc(C.agency)} regulated program.</div>`;}
-    else if(p==='randoms'&&window.PortalPools){setSubtitle(`Manage ${C.agency} random pools, membership, and selections.`);html=window.PortalPools.render(d,ctx)+`<div class=\"section\">${table('Selection History',d.selection_members||[],COLS.selections)}</div>`;}
+    else if(p==='pools'&&window.PortalPools){setSubtitle(`Manage ${C.agency} random pools and eligible pool membership.`);html=window.PortalPools.render(d,ctx);}
+    else if(p==='selections'){setSubtitle(`Run and review ${C.agency} random selections.`);html=`<div class="metrics">${metric('Active Pools',(d.pools||[]).filter(x=>String(x.status||'active').toLowerCase()==='active').length,'Available for selection')}${metric('Selection Events',(d.selection_events||[]).length,'Recorded random draws')}${metric('Selected People',(d.selection_members||[]).length,'Selection records')}${metric('Management',d.entitlements?.random_selections?'Enabled':'Unavailable','Based on plan access')}</div><div class="section">${table('Random Selection History',d.selection_members||[],COLS.selections)}</div>`;}
     else if(p==='agency-configuration'||['authorizations','contractors','random-plan','policy','anti-drug-plan','alcohol-misuse-plan','periodic-testing','clearinghouse','new-entrant'].includes(p)){
       const r=(d.registrations||[])[0]||{};
       html=`<div class="panel"><div class="panel-head"><div><h2>${esc(C.agency)} Configuration</h2><p>${esc(d.agency?.primary_regulation||'Agency configuration')}</p></div></div><div style="padding:16px"><div class="metrics">${metric('Account',r.account_identifier||'—')}${metric('Category',pretty(r.employee_category||'—'))}${metric('Status',pretty(r.status||'Not configured'))}${metric('Effective',fmt(r.effective_date))}</div><div class="section notice">${esc(d.agency?.metadata?.covered_workforce||'Agency-specific employer configuration.')}</div></div></div>`;
@@ -408,7 +411,7 @@ async function render(ctx){
   }
   $('#content').innerHTML=html||`<div class="panel"><div class="empty">No data available.</div></div>`;
   if((p==='people'&&C.kind==='employer')||(C.kind==='agency'&&['drivers','covered-workers','mariners'].includes(p)))bindWorkerEdits(d);
-  if((p==='pools'||(C.kind==='agency'&&p==='randoms'))&&window.PortalPools)window.PortalPools.bind(d,ctx);
+  if(p==='pools'&&window.PortalPools)window.PortalPools.bind(d,ctx);
   if(p==='notifications'&&window.EmployerNotifications)window.EmployerNotifications.bind(d,ctx);
   if(p==='support'&&window.EmployerSupport)window.EmployerSupport.bind(d,ctx);
   if(p==='billing'&&window.EmployerBilling)window.EmployerBilling.bind(d,ctx);
